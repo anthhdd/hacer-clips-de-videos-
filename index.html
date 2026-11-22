@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClipForge · clips virales con IA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e8ebf1;--pan:#fff;--ink:#1a2133;--mut:#6a7388;--line:#d5dae5;--acc:#e5224b;--hi:#ffe600}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,sans-serif}
+header{padding:28px 32px 8px}
+h1{font:44px/1 Anton,Impact,sans-serif;margin:0;letter-spacing:.5px}
+h1 i{font-style:normal;background:var(--hi);padding:0 8px;box-shadow:3px 3px 0 var(--ink)}
+header p{margin:8px 0 0;color:var(--mut);max-width:620px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:24px;padding:20px 32px 48px;align-items:start}
+.pan{background:var(--pan);border:1.5px solid var(--ink);border-radius:6px;padding:18px;margin-bottom:18px}
+h2{font:22px Anton,sans-serif;margin:0 0 12px;letter-spacing:.4px;font-weight:400}
+#drop{display:block;border:2px dashed var(--mut);border-radius:6px;padding:30px;text-align:center;cursor:pointer;transition:.15s}
+#drop.over,#drop:hover{border-color:var(--acc);background:#fff3f5}
+#drop b{display:block;font-size:17px}
+#drop span{color:var(--mut);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px}
+label.f{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:4px}
+select,input[type=number],input[type=password],input[type=text]{font:inherit;font-size:14px;color:var(--ink);padding:7px 8px;border:1.5px solid var(--line);border-radius:4px;background:#fff;width:100%}
+input[type=range]{width:100%;accent-color:var(--acc)}
+button{font:inherit;font-weight:700;cursor:pointer;border:1.5px solid var(--ink);background:#fff;color:var(--ink);padding:9px 16px;border-radius:4px;transition:transform .1s}
+button:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--ink)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+button.pri{background:var(--acc);color:#fff}
+button:disabled{opacity:.4;cursor:not-allowed}
+details{margin-top:14px;font-size:13px}summary{cursor:pointer;color:var(--mut)}
+#bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px;display:none}
+#bar div{height:100%;width:0;background:var(--acc);transition:width .2s}
+#log{margin-top:8px;font-size:13px;color:var(--mut);min-height:20px}
+#clips{display:grid;gap:10px}
+.clip{display:grid;grid-template-columns:62px 1fr;gap:12px;padding:12px;border:1.5px solid var(--line);border-radius:6px;cursor:pointer;background:#fff}
+.clip.on{border-color:var(--ink);box-shadow:4px 4px 0 var(--ink)}
+.sc{font:30px/62px Anton,sans-serif;text-align:center;background:var(--hi);border:1.5px solid var(--ink);border-radius:4px;height:62px}
+.clip h3{margin:0 0 2px;font-size:15px;line-height:1.3}
+.clip small{color:var(--mut)}
+.clip p{margin:4px 0 0;font-size:13px;color:var(--mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.stage{position:sticky;top:16px}
+.screen{background:#0c0e14;border-radius:10px;padding:10px;border:1.5px solid var(--ink)}
+canvas{display:block;width:100%;aspect-ratio:9/16;max-height:72vh;margin:0 auto;border-radius:6px;background:#000}
+.row{display:flex;gap:8px;margin-top:10px}.row button{flex:1}
+.empty{color:var(--mut);font-size:14px}
+#info{font-size:13px;color:var(--mut);margin-top:10px}
+@media(max-width:900px){main{grid-template-columns:1fr;padding:16px}.stage{position:static}header{padding:20px 16px 0}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>CLIP<i>FORGE</i></h1>
+  <p>Sube un video largo. La IA lo transcribe, encuentra los momentos con más potencial viral, y los convierte en clips verticales con subtítulos sincronizados y zooms dinámicos. Todo corre en tu navegador: el video nunca se sube a ningún servidor.</p>
+</header>
+<main>
+<section>
+  <div class="pan">
+    <h2>1. Tu video</h2>
+    <label id="drop" for="file"><b>Arrastra un video o haz clic para elegirlo</b><span>MP4, MOV, WebM · mejor menos de 1 hora</span></label>
+    <input id="file" type="file" accept="video/*,audio/*" hidden>
+    <div id="info"></div>
+    <div class="grid">
+      <label class="f">Idioma del audio<select id="lang"><option value="">Detectar solo</option><option value="spanish">Español</option><option value="english">English</option><option value="portuguese">Português</option><option value="french">Français</option><option value="german">Deutsch</option><option value="italian">Italiano</option></select></label>
+      <label class="f">Modelo de transcripción<select id="model"><option value="Xenova/whisper-tiny">Tiny · rápido</option><option value="Xenova/whisper-base" selected>Base · equilibrado</option><option value="Xenova/whisper-small">Small · más preciso</option></select></label>
+      <label class="f">Cantidad de clips<input id="n" type="number" value="6" min="1" max="20"></label>
+      <label class="f">Duración mínima (s)<input id="min" type="number" value="20" min="8" max="90"></label>
+      <label class="f">Duración máxima (s)<input id="max" type="number" value="55" min="15" max="180"></label>
+    </div>
+    <details><summary>IA opcional: Claude para elegir mejor los clips</summary>
+      <div class="grid">
+        <label class="f">API key de Anthropic (solo en memoria, no se guarda)<input id="key" type="password" placeholder="sk-ant-…" autocomplete="off"></label>
+        <label class="f">Modelo<input id="amodel" type="text" value="claude-sonnet-5-5"></label>
+      </div>
+      <p style="color:var(--mut)">Sin key, los clips se puntúan con un análisis local de ganchos, emoción, ritmo y cierre. Con key, Claude reordena los mejores candidatos y les pone título.</p>
+    </details>
+    <div class="row" style="margin-top:16px"><button id="go" class="pri" disabled>Buscar clips virales</button></div>
+    <div id="bar"><div></div></div>
+    <div id="log"></div>
+  </div>
+  <div class="pan">
+    <h2>2. Clips encontrados</h2>
+    <div id="clips"><p class="empty">Aún no hay clips. Sube un video y pulsa el botón.</p></div>
+  </div>
+</section>
+
+<aside class="stage">
+  <div class="pan">
+    <h2>3. Vista previa y exportar</h2>
+    <div class="screen"><canvas id="cv" width="720" height="1280"></canvas></div>
+    <div class="row"><button id="play" disabled>Reproducir</button><button id="exp" class="pri" disabled>Exportar clip</button></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <label class="f">Formato<select id="layout"><option value="fill">Llenar (recorte)</option><option value="fit">Ajustar + fondo difuminado</option></select></label>
+      <label class="f">Resolución<select id="res"><option value="720">720×1280</option><option value="1080">1080×1920</option></select></label>
+    </div>
+    <label class="f" style="margin-top:12px">Adelanto de subtítulos: <b id="offv">80 ms</b><input id="off" type="range" min="-100" max="400" step="10" value="80"></label>
+    <p style="font-size:12px;color:var(--mut);margin:10px 0 0">La exportación se graba en tiempo real: mantén esta pestaña visible hasta que termine.</p>
+  </div>
+</aside>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const TF='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+const S={file:null,words:[],sents:[],clips:[],cur:null,exp:0,onEnd:null};
+const vid=document.createElement('video');vid.playsInline=true;vid.preload='auto';
+const cv=$('#cv'),ctx=cv.getContext('2d');
+let ac,mon,dest;
+
+/* ---------- utilidades ---------- */
+const fmt=s=>{s=Math.max(0,s);return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0')};
+const log=m=>$('#log').textContent=m;
+const prog=p=>{$('#bar').style.display='block';$('#bar div').style.width=Math.min(100,p)+'%'};
+const ease=x=>1-Math.pow(1-x,3);
+const seek=t=>new Promise(r=>{if(Math.abs(vid.currentTime-t)<.02)return r();vid.onseeked=()=>r();vid.currentTime=t});
+function audioGraph(){
+  if(ac)return;ac=new AudioContext();
+  const src=ac.createMediaElementSource(vid);mon=ac.createGain();dest=ac.createMediaStreamDestination();
+  src.connect(mon);mon.connect(ac.destination);src.connect(dest);
+}
+
+/* ---------- carga del archivo ---------- */
+function load(f){
+  if(!f)return;S.file=f;vid.src=URL.createObjectURL(f);
+  vid.onloadedmetadata=()=>{
+    $('#info').textContent=`${f.name} · ${fmt(vid.duration)} · ${vid.videoWidth||'audio'}${vid.videoWidth?'×'+vid.videoHeight:''}`;
+    $('#go').disabled=false;
+  };
+}
+$('#file').onchange=e=>load(e.target.files[0]);
+const dz=$('#drop');
+['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove('over')}));
+dz.addEventListener('drop',e=>load(e.dataTransfer.files[0]));
+
+/* ---------- transcripción (Whisper en el navegador) ---------- */
+async function getAudio(file){
+  const buf=await file.arrayBuffer();
+  const c=new AudioContext({sampleRate:16000});
+  const ab=await c.decodeAudioData(buf);c.close();
+  const out=new Float32Array(ab.length),nc=ab.numberOfChannels;
+  for(let k=0;k<nc;k++){const d=ab.getChannelData(k);for(let i=0;i<out.length;i++)out[i]+=d[i]/nc}
+  return out;
+}
+async function transcribe(audio){
+  const {pipeline}=await import(TF);
+  const model=$('#model').value,lang=$('#lang').value;
+  const cb=p=>{if(p.status==='progress')log(`Descargando modelo… ${Math.round(p.progress||0)}% (solo la primera vez)`)};
+  let asr;
+  try{
+    if(!navigator.gpu)throw 0;
+    asr=await pipeline('automatic-speech-recognition',model,{device:'webgpu',dtype:'fp32',progress_callback:cb});
+  }catch(e){
+    asr=await pipeline('automatic-speech-recognition',model,{progress_callback:cb});
+  }
+  const SR=16000,SL=180*SR,words=[];
+  for(let o=0;o<audio.length;o+=SL){
+    log(`Transcribiendo… ${fmt(o/SR)} de ${fmt(audio.length/SR)}`);prog(10+80*o/audio.length);
+    const r=await asr(audio.subarray(o,o+SL),{return_timestamps:'word',chunk_length_s:30,stride_length_s:5,task:'transcribe',...(lang?{language:lang}:{})});
+    const off=o/SR;
+    for(const c of r.chunks||[]){
+      const t=c.text.trim();if(!t)continue;
+      const s=c.timestamp[0]+off;let e=(c.timestamp[1]??c.timestamp[0]+.3)+off;if(e<=s)e=s+.2;
+      words.push({t,s,e});
+    }
+  }
+  return words;
+}
+function sentences(w){
+  const out=[];let cur=[];
+  w.forEach((x,i)=>{
+    cur.push(x);const n=w[i+1];
+    if(!n||/[.?!…]$/.test(x.t)||n.s-x.e>.8||cur.length>=28){
+      out.push({s:cur[0].s,e:x.e,w:cur,text:cur.map(a=>a.t).join(' ')});cur=[];
+    }
+  });
+  return out;
+}
+
+/* ---------- puntuación viral (local) ---------- */
+const HOOK=/^[¿¡"]*(c[oó]mo|por qu[eé]|qu[eé] |nunca|nadie|secreto|error|verdad|cuidado|ojo|mira|imagina|sab[ií]as|lo que|esto |la raz[oó]n|el problema|la mayor|how|why|what|never|nobody|secret|mistake|truth|stop|imagine|did you|here'?s|the (biggest|real|only|reason|problem))/i;
+const POWER=/(dinero|mill[oó]n|gratis|incre[ií]ble|loco|impresionante|brutal|miedo|odio|amor|muerte|morir|fracaso|[eé]xito|secreto|error|peligro|verdad|mentira|nunca|siempre|jam[aá]s|imposible|dolor|rico|pobre|money|million|free|crazy|insane|amazing|fear|hate|love|death|fail|success|secret|danger|truth|lie|never|always|impossible|pain|rich|poor|shocking|wow)/i;
+const POWERg=new RegExp(POWER.source,'gi');
+const FILL=/^(y |pues|o sea|bueno|eh|um|uh|and |so |well|like |but )/i;
+function score(ss){
+  const text=ss.map(x=>x.text).join(' '),ws=ss.flatMap(x=>x.w),dur=ss.at(-1).e-ss[0].s,f=ss[0].text;
+  let p=0;
+  if(HOOK.test(f))p+=14;if(/\?/.test(f))p+=8;if(/\d/.test(f))p+=4;if(FILL.test(f))p-=8;
+  p+=Math.min(18,(text.match(POWERg)||[]).length*4);
+  p+=Math.min(10,(text.match(/[!?]/g)||[]).length*2.5);
+  p+=Math.min(6,(text.match(/\d+/g)||[]).length*2);
+  p+=14-Math.min(14,Math.abs(ws.length/dur-2.8)*7);
+  let gaps=0;for(let i=1;i<ws.length;i++)if(ws[i].s-ws[i-1].e>1)gaps++;p-=gaps*5;
+  p+=new Set(ws.map(w=>w.t.toLowerCase().replace(/\W/g,''))).size/ws.length*12;
+  if(/[.!?]$/.test(ss.at(-1).text))p+=6;
+  p+=10-Math.min(10,Math.abs(dur-38)/3);
+  return Math.max(5,Math.min(99,Math.round(p+22)));
+}
+function findClips(keep){
+  const min=+$('#min').value,max=+$('#max').value,ss=S.sents,cand=[];
+  for(let i=0;i<ss.length;i++){
+    let best=null;
+    for(let j=i;j<ss.length;j++){
+      const d=ss[j].e-ss[i].s;if(d>max)break;if(d<min)continue;
+      const sl=ss.slice(i,j+1),sc=score(sl);
+      if(!best||sc>best.sc)best={sc,s:ss[i].s,e:ss[j].e,text:sl.map(x=>x.text).join(' '),title:ss[i].text.slice(0,70)};
+    }
+    if(best)cand.push(best);
+  }
+  cand.sort((a,b)=>b.sc-a.sc);
+  const pick=[];
+  for(const c of cand){if(pick.length>=keep)break;if(!pick.some(p=>c.s<p.e&&c.e>p.s))pick.push(c)}
+  return pick;
+}
+async function aiRank(list){
+  const key=$('#key').value.trim();if(!key)return list;
+  log('Claude está analizando los candidatos…');
+  try{
+    const items=list.map((c,i)=>({i,text:c.text.slice(0,900)}));
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:$('#amodel').value.trim(),max_tokens:2000,messages:[{role:'user',content:'Eres editor de contenido viral para TikTok, Reels y Shorts. Puntúa de 0 a 100 el potencial viral de cada fragmento (gancho en los primeros 3 segundos, emoción, valor, cierre satisfactorio) y dale un título corto (máx. 8 palabras) en el idioma del fragmento. Responde SOLO con JSON: [{"i":0,"score":80,"title":"..."}]\n\n'+JSON.stringify(items)}]})});
+    const d=await r.json();if(!d.content)throw new Error(d.error?.message||'sin respuesta');
+    const a=JSON.parse(d.content.map(x=>x.text||'').join('').replace(/```json|```/g,'').trim());
+    a.forEach(x=>{const c=list[x.i];if(c){c.sc=Math.round((c.sc+x.score)/2);if(x.title)c.title=x.title}});
+  }catch(e){log('No se pudo usar Claude ('+e.message+'). Uso el puntaje local.');await new Promise(r=>setTimeout(r,1500))}
+  return list;
+}
+
+/* ---------- preparar clip: zooms y subtítulos ---------- */
+function prep(c){
+  c.s=Math.max(0,c.s-.15);c.e=Math.min(vid.duration||c.e+1,c.e+.35);
+  c.w=S.words.filter(w=>w.e>c.s&&w.s<c.e);
+  const ev=[];let last=-9;
+  c.w.forEach((w,i)=>{
+    const n=c.w[i+1];
+    const strong=POWER.test(w.t)||/\d/.test(w.t)||/[!?]$/.test(w.t)||(n&&n.s-w.e>.35&&w.t.length>4);
+    const start=i===0||/[.!?]$/.test(c.w[i-1].t);
+    if((strong||start)&&w.s-last>1.5){ev.push({t:w.s,a:strong?.17:.11,pan:ev.length%2?.7:-.7});last=w.s}
+  });
+  c.ev=ev;
+  const ch=[];let cur=[];
+  c.w.forEach((w,i)=>{
+    cur.push(w);const n=c.w[i+1];
+    if(!n||cur.length>=3||cur.map(x=>x.t).join(' ').length>16||/[.,!?;:]$/.test(w.t)||n.s-w.e>.35){ch.push(cur);cur=[]}
+  });
+  c.ch=ch;return c;
+}
+
+/* ---------- render ---------- */
+function render(t){
+  const c=S.cur;if(!c||!vid.videoWidth&&vid.readyState<2)return;
+  const W=cv.width,H=cv.height,vw=vid.videoWidth||W,vh=vid.videoHeight||H;
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  // zoom dinámico: empuje lento + "punch-in" en palabras clave
+  let z=1.03+.05*Math.min(1,(t-c.s)/(c.e-c.s)),k=-1;
+  for(let i=0;i<c.ev.length&&c.ev[i].t<=t;i++)k=i;
+  for(let q=k;q>k-2&&q>=0;q--){const e=c.ev[q],dt=t-e.t;z+=e.a*ease(Math.min(1,dt/.12))*Math.exp(-dt/.75)}
+  const p0=k>0?c.ev[k-1].pan:0,p1=k>=0?c.ev[k].pan:0,f=k>=0?ease(Math.min(1,(t-c.ev[k].t)/.6)):1,pan=p0+(p1-p0)*f;
+  if(S.layout==='fit'){
+    const b=Math.max(W/vw,H/vh);
+    ctx.filter='blur(28px) brightness(.55)';ctx.drawImage(vid,(W-vw*b)/2,(H-vh*b)/2,vw*b,vh*b);ctx.filter='none';
+    const s0=Math.min(W/vw,H/vh),bh=vh*s0;
+    ctx.save();ctx.beginPath();ctx.rect(0,(H-bh)/2,W,bh);ctx.clip();
+    const sc=s0*z,dw=vw*sc,dh=vh*sc;
+    ctx.drawImage(vid,(W-dw)/2+pan*Math.max(0,(dw-W)/2),(H-dh)/2,dw,dh);ctx.restore();
+  }else{
+    const sc=Math.max(W/vw,H/vh)*z,dw=vw*sc,dh=vh*sc;
+    ctx.drawImage(vid,(W-dw)/2+pan*Math.max(0,(dw-W)/2),(H-dh)/2,dw,dh);
+  }
+  subtitles(c,t+(+$('#off').value)/1000,W,H);
+}
+function subtitles(c,tt,W,H){
+  let ci=-1;for(let i=0;i<c.ch.length;i++){if(c.ch[i][0].s<=tt)ci=i;else break}
+  if(ci<0)return;const chn=c.ch[ci];if(tt>chn.at(-1).e+.25)return;
+  let ai=0;chn.forEach((w,i)=>{if(w.s<=tt)ai=i});
+  const words=chn.map(w=>w.t.replace(/[.,;:¿¡"]/g,'').toUpperCase());
+  let fs=W*.09;ctx.font=`${fs}px Anton,Impact,sans-serif`;
+  const gap=fs*.28;let tw=words.reduce((a,x)=>a+ctx.measureText(x).width,0)+gap*(words.length-1);
+  if(tw>W*.9){fs*=W*.9/tw;ctx.font=`${fs}px Anton,Impact,sans-serif`;tw=W*.9}
+  const ws=words.map(x=>ctx.measureText(x).width);
+  ctx.textBaseline='middle';ctx.textAlign='center';ctx.lineJoin='round';ctx.lineWidth=fs*.22;
+  let x=(W-tw)/2;const y=H*.7;
+  words.forEach((txt,i)=>{
+    const cx=x+ws[i]/2,pop=i===ai?1+.18*Math.max(0,1-(tt-chn[i].s)/.15):1;
+    ctx.save();ctx.translate(cx,y);ctx.scale(pop,pop);
+    ctx.strokeStyle='#000';ctx.strokeText(txt,0,0);
+    ctx.fillStyle=i===ai?'#ffe600':'#fff';ctx.fillText(txt,0,0);ctx.restore();
+    x+=ws[i]+gap;
+  });
+}
+function loop(){
+  const c=S.cur;
+  if(c&&vid.readyState>1){
+    const t=vid.currentTime;render(t);
+    if(!vid.paused&&t>=c.e){
+      vid.pause();
+      if(S.onEnd){const f=S.onEnd;S.onEnd=null;f()}
+      else{$('#play').textContent='Reproducir'}
+    }
+    if(S.exp)$('#exp').textContent=`Grabando… ${Math.min(100,Math.round((t-c.s)/(c.e-c.s)*100))}%`;
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------- UI de clips ---------- */
+function listClips(){
+  const box=$('#clips');box.innerHTML='';
+  S.clips.forEach((c,i)=>{
+    const d=document.createElement('div');d.className='clip';d.tabIndex=0;
+    d.innerHTML=`<div class="sc">${c.sc}</div><div><h3></h3><small>${fmt(c.s)} – ${fmt(c.e)} · ${Math.round(c.e-c.s)} s</small><p></p></div>`;
+    d.querySelector('h3').textContent=c.title;d.querySelector('p').textContent=c.text;
+    const pick=async()=>{
+      document.querySelectorAll('.clip').forEach(x=>x.classList.remove('on'));d.classList.add('on');
+      vid.pause();S.onEnd=null;S.cur=c;await seek(c.s);$('#play').disabled=$('#exp').disabled=false;$('#play').textContent='Reproducir';
+    };
+    d.onclick=pick;d.onkeydown=e=>{if(e.key==='Enter')pick()};
+    box.append(d);
+  });
+  if(S.clips[0])box.firstChild.click();
+}
+$('#play').onclick=async()=>{
+  const c=S.cur;if(!c)return;
+  if(!vid.paused){vid.pause();$('#play').textContent='Reproducir';return}
+  audioGraph();await ac.resume();mon.gain.value=1;
+  if(vid.currentTime>=c.e-.1||vid.currentTime<c.s)await seek(c.s);
+  await vid.play();$('#play').textContent='Pausar';
+};
+$('#off').oninput=e=>$('#offv').textContent=e.target.value+' ms';
+$('#layout').onchange=e=>S.layout=e.target.value;S.layout='fill';
+$('#res').onchange=e=>{const w=+e.target.value;cv.width=w;cv.height=Math.round(w*16/9)};
+
+/* ---------- exportar ---------- */
+$('#exp').onclick=async()=>{
+  const c=S.cur;if(!c||S.exp)return;
+  S.exp=1;$('#exp').disabled=$('#play').disabled=true;vid.pause();
+  audioGraph();await ac.resume();mon.gain.value=0;
+  await seek(c.s);
+  const stream=cv.captureStream(30);dest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));
+  const mt=['video/mp4;codecs=avc1.640028,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+  const rec=new MediaRecorder(stream,{mimeType:mt,videoBitsPerSecond:10e6}),parts=[];
+  rec.ondataavailable=e=>e.data.size&&parts.push(e.data);
+  const stopped=new Promise(r=>rec.onstop=r);
+  rec.start(250);await vid.play();
+  await new Promise(r=>S.onEnd=r);
+  await new Promise(r=>setTimeout(r,300));rec.stop();await stopped;
+  const type=mt.split(';')[0],a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(parts,{type}));
+  a.download=`clip_${Math.round(c.s)}s.${type.includes('mp4')?'mp4':'webm'}`;a.click();
+  mon.gain.value=1;S.exp=0;$('#exp').textContent='Exportar clip';$('#exp').disabled=$('#play').disabled=false;
+  await seek(c.s);
+};
+
+/* ---------- flujo principal ---------- */
+$('#go').onclick=async()=>{
+  if(!S.file)return;
+  const btn=$('#go');btn.disabled=true;
+  try{
+    prog(2);log('Extrayendo audio…');
+    const audio=await getAudio(S.file);prog(8);
+    log('Cargando modelo de IA…');
+    S.words=await transcribe(audio);
+    if(S.words.length<10)throw new Error('No se detectó suficiente voz en el video.');
+    prog(92);log('Buscando los mejores momentos…');
+    S.sents=sentences(S.words);
+    const n=+$('#n').value,hasKey=!!$('#key').value.trim();
+    let list=findClips(hasKey?n*2:n);
+    list=await aiRank(list);
+    list.sort((a,b)=>b.sc-a.sc);
+    S.clips=list.slice(0,n).map(prep);
+    if(!S.clips.length)throw new Error('No encontré clips con esos rangos de duración.');
+    prog(100);log(`Listo: ${S.clips.length} clips. Elige uno para previsualizarlo.`);
+    listClips();
+  }catch(e){console.error(e);log('Error: '+(e.message||e))}
+  btn.disabled=false;
+};
+document.fonts.load('40px Anton');
+loop();
+</script>
+</body>
+</html>
