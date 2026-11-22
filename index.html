@@ -65,7 +65,9 @@ canvas{display:block;width:100%;aspect-ratio:9/16;max-height:72vh;margin:0 auto;
     <div id="info"></div>
     <div class="grid">
       <label class="f">Idioma del audio<select id="lang"><option value="">Detectar solo</option><option value="spanish">Español</option><option value="english">English</option><option value="portuguese">Português</option><option value="french">Français</option><option value="german">Deutsch</option><option value="italian">Italiano</option></select></label>
-      <label class="f">Modelo de transcripción<select id="model"><option value="Xenova/whisper-tiny">Tiny · rápido</option><option value="Xenova/whisper-base" selected>Base · equilibrado</option><option value="Xenova/whisper-small">Small · más preciso</option></select></label>
+      <label class="f">Transcripción<select id="prov"><option value="groq">Groq en la nube (gratis, rápido)</option><option value="openai">OpenAI Whisper (de pago)</option><option value="local">En este equipo (pesado)</option></select></label>
+      <label class="f" id="tkl">API key de Groq<input id="tkey" type="password" placeholder="gsk_…" autocomplete="off"></label>
+      <label class="f" id="mlab" style="display:none">Modelo local<select id="model"><option value="Xenova/whisper-tiny" selected>Tiny · el más ligero</option><option value="Xenova/whisper-base">Base</option></select></label>
       <label class="f">Cantidad de clips<input id="n" type="number" value="6" min="1" max="20"></label>
       <label class="f">Duración mínima (s)<input id="min" type="number" value="20" min="8" max="90"></label>
       <label class="f">Duración máxima (s)<input id="max" type="number" value="55" min="15" max="180"></label>
@@ -145,7 +147,37 @@ async function getAudio(file){
   for(let k=0;k<nc;k++){const d=ab.getChannelData(k);for(let i=0;i<out.length;i++)out[i]+=d[i]/nc}
   return out;
 }
-async function transcribe(audio){
+function wav(f){
+  const b=new ArrayBuffer(44+f.length*2),v=new DataView(b),w=(o,s)=>[...s].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+  w(0,'RIFF');v.setUint32(4,36+f.length*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,f.length*2,true);
+  for(let i=0;i<f.length;i++){const s=Math.max(-1,Math.min(1,f[i]));v.setInt16(44+i*2,s<0?s*32768:s*32767,true)}
+  return new Blob([b],{type:'audio/wav'});
+}
+async function transcribeRemote(audio){
+  const prov=$('#prov').value,key=$('#tkey').value.trim();
+  if(!key)throw new Error('Pega tu API key de '+(prov==='groq'?'Groq (console.groq.com/keys)':'OpenAI')+'.');
+  const cfg=prov==='groq'?{url:'https://api.groq.com/openai/v1/audio/transcriptions',model:'whisper-large-v3-turbo'}:{url:'https://api.openai.com/v1/audio/transcriptions',model:'whisper-1'};
+  const iso={spanish:'es',english:'en',portuguese:'pt',french:'fr',german:'de',italian:'it'}[$('#lang').value];
+  const SL=480*16000,words=[];
+  for(let o=0;o<audio.length;o+=SL){
+    log(`Transcribiendo en la nube… ${fmt(o/16000)} de ${fmt(audio.length/16000)}`);prog(10+80*o/audio.length);
+    const fd=new FormData();
+    fd.append('file',wav(audio.subarray(o,o+SL)),'a.wav');fd.append('model',cfg.model);
+    fd.append('response_format','verbose_json');fd.append('timestamp_granularities[]','word');
+    if(iso)fd.append('language',iso);
+    const r=await fetch(cfg.url,{method:'POST',headers:{Authorization:'Bearer '+key},body:fd});
+    const d=await r.json();if(!r.ok)throw new Error(d.error?.message||('Error '+r.status));
+    const off=o/16000,txt=d.text||'';let p=0;
+    for(const x of d.words||[]){
+      let t=x.word.trim();const i=txt.indexOf(t,p);
+      if(i>=0){let j=i+t.length;while(j<txt.length&&/[.,;:!?…"”)]/.test(txt[j]))j++;t=txt.slice(i,j);p=j}
+      words.push({t,s:x.start+off,e:Math.max(x.end,x.start+.15)+off});
+    }
+  }
+  return words;
+}
+async function transcribeLocal(audio){
   const {pipeline}=await import(TF);
   const model=$('#model').value,lang=$('#lang').value;
   const cb=p=>{if(p.status==='progress')log(`Descargando modelo… ${Math.round(p.progress||0)}% (solo la primera vez)`)};
@@ -361,7 +393,8 @@ $('#go').onclick=async()=>{
     prog(2);log('Extrayendo audio…');
     const audio=await getAudio(S.file);prog(8);
     log('Cargando modelo de IA…');
-    S.words=await transcribe(audio);
+    try{localStorage.setItem('cf_tkey_'+$('#prov').value,$('#tkey').value.trim())}catch(e){}
+    S.words=await($('#prov').value==='local'?transcribeLocal(audio):transcribeRemote(audio));
     if(S.words.length<10)throw new Error('No se detectó suficiente voz en el video.');
     prog(92);log('Buscando los mejores momentos…');
     S.sents=sentences(S.words);
@@ -376,6 +409,14 @@ $('#go').onclick=async()=>{
   }catch(e){console.error(e);log('Error: '+(e.message||e))}
   btn.disabled=false;
 };
+function provUI(){
+  const p=$('#prov').value;
+  $('#tkl').style.display=p==='local'?'none':'';$('#mlab').style.display=p==='local'?'':'none';
+  $('#tkl').firstChild.textContent='API key de '+(p==='groq'?'Groq':'OpenAI');
+  $('#tkey').placeholder=p==='groq'?'gsk_…':'sk-…';
+  try{$('#tkey').value=localStorage.getItem('cf_tkey_'+p)||''}catch(e){}
+}
+$('#prov').onchange=provUI;provUI();
 document.fonts.load('40px Anton');
 loop();
 </script>
