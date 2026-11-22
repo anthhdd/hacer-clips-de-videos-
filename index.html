@@ -109,6 +109,7 @@ textarea{font:inherit;font-size:13px;padding:7px 8px;border:1.5px solid var(--li
     <label class="f" style="margin-top:12px">Altura de subtítulos<input id="ypos" type="range" min="40" max="90" value="79"></label>
     <label class="chk"><input type="checkbox" id="hook" checked> Mostrar título gancho los primeros 3 s</label>
     <label class="chk"><input type="checkbox" id="wm" checked> Marca de agua «anthnclips»</label>
+    <label class="chk"><input type="checkbox" id="ss" checked> Exportar HD con supersampling 1.5× (más nítido, algo más lento)</label>
     <label class="f" style="margin-top:8px">Título gancho<input id="ttl" type="text"></label>
     <label class="f" style="margin-top:12px">Texto del clip (corrige errores; mantén el mismo número de palabras)<textarea id="ed" rows="4"></textarea></label>
     <p style="font-size:12px;color:var(--mut);margin:10px 0 0">La exportación HD se procesa cuadro a cuadro (sin pérdida de frames) y tarda 1–2 min por clip. Mantén esta pestaña abierta hasta que termine. Mejor en Chrome o Edge.</p>
@@ -124,6 +125,9 @@ const MINCLIP=18,MAXCLIP=60,FPS=30;
 const S={file:null,words:[],sents:[],clips:[],cur:null,exp:0,onEnd:null};
 const vid=document.createElement('video');vid.playsInline=true;vid.preload='auto';
 const cv=$('#cv'),ctx=cv.getContext('2d',{alpha:false});
+// canvas de render (fuente de verdad) — permite supersampling en export
+const rcv=document.createElement('canvas');rcv.width=1080;rcv.height=1920;
+const rctx=rcv.getContext('2d',{alpha:false});
 let ac,mon,dest;
 
 /* ---------- utilidades ---------- */
@@ -166,7 +170,6 @@ const dz=$('#drop');
 dz.addEventListener('drop',e=>load(e.dataTransfer.files[0]));
 
 /* ---------- audio ---------- */
-// Decodifica a 48 kHz: devuelve mono 16 kHz (para Whisper) y el buffer original (para el audio HD del clip)
 async function getAudio(file){
   const buf=await file.arrayBuffer();
   const c=new AudioContext({sampleRate:48000});
@@ -255,7 +258,7 @@ function sentences(w){
   return out;
 }
 
-/* ---------- puntuación viral (local) ---------- */
+/* ---------- puntuación viral ---------- */
 const HOOK=/^[¿¡"]*(c[oó]mo|por qu[eé]|qu[eé] |nunca|nadie|secreto|error|verdad|cuidado|ojo|mira|imagina|sab[ií]as|lo que|esto |la raz[oó]n|el problema|la mayor|how|why|what|never|nobody|secret|mistake|truth|stop|imagine|did you|here'?s|the (biggest|real|only|reason|problem))/i;
 const POWER=/(dinero|mill[oó]n|gratis|incre[ií]ble|loco|impresionante|brutal|miedo|odio|amor|muerte|morir|fracaso|[eé]xito|secreto|error|peligro|verdad|mentira|nunca|siempre|jam[aá]s|imposible|dolor|rico|pobre|money|million|free|crazy|insane|amazing|fear|hate|love|death|fail|success|secret|danger|truth|lie|never|always|impossible|pain|rich|poor|shocking|wow)/i;
 const POWERg=new RegExp(POWER.source,'gi');
@@ -302,7 +305,6 @@ function score(ss,s0,e0){
   }
   return{sc:Math.max(5,Math.min(99,Math.round(p+16))),why};
 }
-// La duración la decide el análisis: prueba todos los finales posibles entre MINCLIP y MAXCLIP segundos
 function findClips(keep){
   const ss=S.sents,cand=[];
   for(let i=0;i<ss.length;i++){
@@ -320,7 +322,7 @@ function findClips(keep){
   return pick;
 }
 
-/* ---------- Claude elige los segundos ---------- */
+/* ---------- Claude ---------- */
 async function aiPick(n){
   const key=$('#key').value.trim();if(!key)return null;
   const ss=S.sents;
@@ -361,7 +363,7 @@ ${lines}`;
   }catch(e){log('No se pudo usar Claude ('+e.message+'). Uso el análisis local.');await new Promise(r=>setTimeout(r,1800));return null}
 }
 
-/* ---------- preparar clip: zooms y subtítulos ---------- */
+/* ---------- preparar clip ---------- */
 function prep(c){
   c.s=Math.max(0,c.s-.15);c.e=Math.min(vid.duration||c.e+1,c.e+.35);
   c.w=S.words.filter(w=>w.e>c.s&&w.s<c.e);
@@ -381,18 +383,23 @@ function prep(c){
   c.ch=ch;return c;
 }
 
-/* ---------- seguimiento del hablante ---------- */
+/* ---------- seguimiento ---------- */
 function track(c){
-  return c.tp||(c.tp=(S.q=(S.q||Promise.resolve()).then(()=>analyze(c))));
+  if(c.tp)return c.tp;
+  const run=()=>analyze(c).catch(e=>{console.warn('track falló para clip, sigo sin encuadre:',e)});
+  // nunca dejar que un rechazo envenene la cadena global
+  S.q=(S.q||Promise.resolve()).then(run,run).catch(()=>{});
+  c.tp=S.q.then(()=>{});
+  return c.tp;
 }
 async function analyze(c){
-  const vw=vid.videoWidth;c.fp=null;
+  const vw=vid.videoWidth;c.fp=null;c.zs=1;
   if(!vw||$('#trk').value==='0'||vid.videoHeight>=vw)return;
   const w=96,h=Math.max(24,Math.round(96*vid.videoHeight/vw)),o=document.createElement('canvas');o.width=w;o.height=h;
   const g=o.getContext('2d',{willReadFrequently:true}),raw=[],ts=[];
   for(let t=c.s;t<c.e;t+=.6){
     log(`Analizando encuadre del clip… ${Math.round((t-c.s)/(c.e-c.s)*100)}%`);
-    await seek(t);g.drawImage(vid,0,0,w,h);
+    try{await seek(t);g.drawImage(vid,0,0,w,h)}catch(e){raw.push(null);ts.push(t);continue}
     const d=g.getImageData(0,0,w,h).data,col=new Float32Array(w),sk=[];
     for(let k=0;k<w*h;k++){
       const R=d[k*4],G=d[k*4+1],B=d[k*4+2],y=.299*R+.587*G+.114*B,cb=128-.1687*R-.3313*G+.5*B,cr=128+.5*R-.4187*G-.0813*B;
@@ -408,7 +415,7 @@ async function analyze(c){
     raw.push(pt);ts.push(t);
   }
   const ok=raw.filter(Boolean).length;
-  c.zs=ok/raw.length>.3?1:.5;
+  c.zs=raw.length&&ok/raw.length>.3?1:.5;
   if(!ok)return;
   let last=raw.find(Boolean);const fl=raw.map(p=>last=p||last);
   const med=(a,i)=>{const q=a.slice(Math.max(0,i-2),i+3).sort((m,n)=>m-n);return q[q.length>>1]};
@@ -423,78 +430,100 @@ function focusAt(c,t){
 }
 const place=(len,view,fc,an)=>len<=view?(view-len)/2:Math.min(0,Math.max(view-len,view*an-fc*len));
 
-/* ---------- render ---------- */
-function render(t){
-  const c=S.cur;if(!c||!vid.videoWidth&&vid.readyState<2)return;
-  const W=cv.width,H=cv.height,vw=vid.videoWidth||W,vh=vid.videoHeight||H;
-  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
-  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+/* ---------- render (fuente: rctx a resolución objetivo) ---------- */
+function gradeOn(g){
+  try{g.filter='contrast(1.035) saturate(1.045) brightness(1.005)'}catch(e){}
+}
+function gradeOff(g){try{g.filter='none'}catch(e){}}
+
+function renderAt(g,t,W,H){
+  const c=S.cur;
+  if(!c)return;
+  const ready=vid.readyState>=2;
+  const vw=vid.videoWidth||W,vh=vid.videoHeight||H;
+  g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
+  g.fillStyle='#000';g.fillRect(0,0,W,H);
+  if(!ready||!vid.videoWidth){ // solo audio o aún no listo
+    subtitles(c,t+(+$('#off').value)/1000,W,H,g);watermark(W,H,g);return;
+  }
   const zk=+$('#zm').value*(c.zs??1);
   let z=1.02+.04*Math.min(1,(t-c.s)/(c.e-c.s)),k=-1;
   for(let i=0;i<c.ev.length&&c.ev[i].t<=t;i++)k=i;
   for(let q=k;q>k-2&&q>=0;q--){const e=c.ev[q],dt=t-e.t;z+=e.a*ease(Math.min(1,dt/.18))*Math.exp(-dt/.75)}
   z=1+(z-1)*zk;
   const F=focusAt(c,t);
+  gradeOn(g);
   if(S.layout==='fit'){
     const b=Math.max(W/vw,H/vh);
-    ctx.filter='blur(28px) brightness(.55)';ctx.drawImage(vid,(W-vw*b)/2,(H-vh*b)/2,vw*b,vh*b);ctx.filter='none';
+    try{g.filter='blur(28px) brightness(.55)'}catch(e){}
+    g.drawImage(vid,(W-vw*b)/2,(H-vh*b)/2,vw*b,vh*b);
+    gradeOff(g);gradeOn(g);
     const s0=Math.min(W/vw,H/vh),bh=vh*s0,top=(H-bh)/2;
-    ctx.save();ctx.beginPath();ctx.rect(0,top,W,bh);ctx.clip();
+    g.save();g.beginPath();g.rect(0,top,W,bh);g.clip();
     const sc=s0*z,dw=vw*sc,dh=vh*sc;
-    ctx.drawImage(vid,place(dw,W,F.x,.5),top+place(dh,bh,F.y,.5),dw,dh);ctx.restore();
+    g.drawImage(vid,place(dw,W,F.x,.5),top+place(dh,bh,F.y,.5),dw,dh);g.restore();
+    gradeOff(g);
   }else{
-    // Recorte directo de la región de origen: máxima nitidez, sin reescalar de más
     const sc=Math.max(W/vw,H/vh)*z,dw=vw*sc,dh=vh*sc;
     const ox=place(dw,W,F.x,.5),oy=place(dh,H,F.y,.42);
-    ctx.drawImage(vid,-ox/sc,-oy/sc,W/sc,H/sc,0,0,W,H);
+    g.drawImage(vid,-ox/sc,-oy/sc,W/sc,H/sc,0,0,W,H);
+    gradeOff(g);
   }
-  subtitles(c,t+(+$('#off').value)/1000,W,H);overlays(c,t,W,H);watermark(W,H);
+  subtitles(c,t+(+$('#off').value)/1000,W,H,g);overlays(c,t,W,H,g);watermark(W,H,g);
 }
-function subtitles(c,tt,W,H){
+function render(t){ // dibuja a canvas visible
+  const W=cv.width,H=cv.height;
+  if(rcv.width!==W||rcv.height!==H){rcv.width=W;rcv.height=H}
+  renderAt(rctx,t,W,H);
+  ctx.drawImage(rcv,0,0,W,H);
+}
+function subtitles(c,tt,W,H,g){
   let ci=-1;for(let i=0;i<c.ch.length;i++){if(c.ch[i][0].s<=tt)ci=i;else break}
   if(ci<0)return;const chn=c.ch[ci];if(tt>chn.at(-1).e+.25)return;
   let ai=0;chn.forEach((w,i)=>{if(w.s<=tt)ai=i});
   const sty=$('#sty').value,words=chn.map(w=>w.t.replace(/[.,;:¿¡"]/g,'').toUpperCase());
-  let fs=W*(+$('#fsz').value)/100;ctx.font=`${fs}px Anton,Impact,sans-serif`;
-  const gap=fs*.28;let tw=words.reduce((a,x)=>a+ctx.measureText(x).width,0)+gap*(words.length-1);
-  if(tw>W*.9){fs*=W*.9/tw;ctx.font=`${fs}px Anton,Impact,sans-serif`;tw=W*.9}
-  const ws=words.map(x=>ctx.measureText(x).width),y=H*(+$('#ypos').value)/100;
-  ctx.textBaseline='middle';ctx.textAlign='center';ctx.lineJoin='round';
-  if(sty==='box'){ctx.fillStyle='rgba(0,0,0,.72)';ctx.beginPath();ctx.roundRect((W-tw)/2-fs*.35,y-fs*.7,tw+fs*.7,fs*1.4,fs*.25);ctx.fill()}
+  let fs=W*(+$('#fsz').value)/100;g.font=`${fs}px Anton,Impact,sans-serif`;
+  const gap=fs*.28;let tw=words.reduce((a,x)=>a+g.measureText(x).width,0)+gap*(words.length-1);
+  if(tw>W*.9){fs*=W*.9/tw;g.font=`${fs}px Anton,Impact,sans-serif`;tw=W*.9}
+  const ws=words.map(x=>g.measureText(x).width),y=H*(+$('#ypos').value)/100;
+  g.textBaseline='middle';g.textAlign='center';g.lineJoin='round';
+  if(sty==='box'){g.fillStyle='rgba(0,0,0,.72)';g.beginPath();g.roundRect((W-tw)/2-fs*.35,y-fs*.7,tw+fs*.7,fs*1.4,fs*.25);g.fill()}
   let x=(W-tw)/2;
   words.forEach((txt,i)=>{
     const act=i===ai,pop=act?1+.18*Math.max(0,1-(tt-chn[i].s)/.15):1;
-    ctx.save();ctx.translate(x+ws[i]/2,y);ctx.scale(pop,pop);
-    if(sty!=='box'){ctx.lineWidth=fs*.22;ctx.strokeStyle='#000';ctx.strokeText(txt,0,0)}
-    if(sty==='neon'&&act){ctx.shadowColor='#00f0ff';ctx.shadowBlur=fs*.5}
-    ctx.fillStyle=act&&sty!=='clean'?(sty==='neon'?'#00f0ff':'#ffe600'):'#fff';
-    ctx.fillText(txt,0,0);ctx.restore();x+=ws[i]+gap;
+    g.save();g.translate(x+ws[i]/2,y);g.scale(pop,pop);
+    if(sty!=='box'){g.lineWidth=fs*.22;g.strokeStyle='#000';g.strokeText(txt,0,0)}
+    if(sty==='neon'&&act){g.shadowColor='#00f0ff';g.shadowBlur=fs*.5}
+    else if(act){g.shadowColor='rgba(0,0,0,.45)';g.shadowBlur=fs*.18;g.shadowOffsetY=fs*.04}
+    g.fillStyle=act&&sty!=='clean'?(sty==='neon'?'#00f0ff':'#ffe600'):'#fff';
+    g.fillText(txt,0,0);g.restore();x+=ws[i]+gap;
   });
 }
-function overlays(c,t,W,H){
+function overlays(c,t,W,H,g){
   const e=t-c.s;
   if($('#hook').checked&&c.title&&e<3){
-    ctx.save();ctx.globalAlpha=Math.max(0,Math.min(1,e/.25,(3-e)/.4));
-    const fs=W*.05;ctx.font=`700 ${fs}px Inter,Arial,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+    g.save();g.globalAlpha=Math.max(0,Math.min(1,e/.25,(3-e)/.4));
+    const fs=W*.05;g.font=`700 ${fs}px Inter,Arial,sans-serif`;g.textAlign='center';g.textBaseline='middle';
     const ln=[];let cur='';
-    c.title.split(' ').forEach(w=>{const n=cur?cur+' '+w:w;if(ctx.measureText(n).width>W*.74&&cur){ln.push(cur);cur=w}else cur=n});ln.push(cur);
+    c.title.split(' ').forEach(w=>{const n=cur?cur+' '+w:w;if(g.measureText(n).width>W*.74&&cur){ln.push(cur);cur=w}else cur=n});ln.push(cur);
     const lh=fs*1.3,bh=ln.length*lh+fs*.8,y0=H*.14;
-    ctx.fillStyle='#ffe600';ctx.beginPath();ctx.roundRect(W*.07,y0,W*.86,bh,fs*.4);ctx.fill();
-    ctx.fillStyle='#111';ln.forEach((l,i)=>ctx.fillText(l,W/2,y0+fs*.4+lh*(i+.5)));ctx.restore();
+    g.fillStyle='#ffe600';g.beginPath();g.roundRect(W*.07,y0,W*.86,bh,fs*.4);g.fill();
+    g.fillStyle='#111';ln.forEach((l,i)=>g.fillText(l,W/2,y0+fs*.4+lh*(i+.5)));g.restore();
   }
 }
-function watermark(W,H){
+function watermark(W,H,g){
   if(!$('#wm').checked)return;
   const fs=W*.038,y=H*.93;
-  ctx.save();ctx.font=`700 ${fs}px Inter,Arial,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';
-  ctx.globalAlpha=.7;ctx.lineWidth=fs*.16;ctx.strokeStyle='rgba(0,0,0,.6)';ctx.strokeText('anthnclips',W/2,y);
-  ctx.fillStyle='#fff';ctx.fillText('anthnclips',W/2,y);ctx.restore();
+  g.save();g.font=`700 ${fs}px Inter,Arial,sans-serif`;g.textAlign='center';g.textBaseline='middle';g.lineJoin='round';
+  g.globalAlpha=.7;g.lineWidth=fs*.16;g.strokeStyle='rgba(0,0,0,.6)';g.strokeText('anthnclips',W/2,y);
+  g.fillStyle='#fff';g.fillText('anthnclips',W/2,y);g.restore();
 }
 function loop(){
   const c=S.cur;
-  if(c&&vid.readyState>1&&S.exp!==1){
-    const t=vid.currentTime;render(t);
-    if(!vid.paused&&t>=c.e){
+  if(c&&S.exp!==1){
+    const t=vid.currentTime||c.s;
+    render(t);
+    if(!vid.paused&&t>=c.e-.01){
       vid.pause();
       if(S.onEnd){const f=S.onEnd;S.onEnd=null;f()}
       else{$('#play').textContent='Reproducir'}
@@ -504,7 +533,7 @@ function loop(){
   requestAnimationFrame(loop);
 }
 
-/* ---------- UI de clips ---------- */
+/* ---------- lista de clips ---------- */
 function listClips(){
   const box=$('#clips');box.innerHTML='';
   S.clips.forEach((c,i)=>{
@@ -514,7 +543,22 @@ function listClips(){
     const pick=async()=>{
       if(S.exp)return;
       document.querySelectorAll('.clip').forEach(x=>x.classList.remove('on'));d.classList.add('on');
-      vid.pause();S.onEnd=null;S.cur=c;$('#ed').value=c.w.map(w=>w.t).join(' ');$('#ttl').value=c.title;$('#play').disabled=$('#exp').disabled=true;await track(c);if(S.cur!==c)return;await seek(c.s);log('');$('#play').disabled=$('#exp').disabled=false;$('#play').textContent='Reproducir';
+      vid.pause();S.onEnd=null;S.cur=c;
+      $('#ed').value=c.w.map(w=>w.t).join(' ');$('#ttl').value=c.title;
+      $('#play').disabled=$('#exp').disabled=true;
+      try{
+        await track(c);
+        if(S.cur!==c)return; // cambió de clip mientras analizábamos
+        await seek(c.s);
+        log('');
+      }catch(e){
+        console.warn('No se pudo preparar el clip:',e);
+      }finally{
+        if(S.cur===c){
+          $('#play').disabled=false;$('#exp').disabled=false;
+          $('#play').textContent='Reproducir';
+        }
+      }
     };
     d.onclick=pick;d.onkeydown=e=>{if(e.key==='Enter')pick()};
     box.append(d);
@@ -547,11 +591,14 @@ function download(blob,c,ext){
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);
 }
 
-// Exportación HD: renderiza cuadro a cuadro y codifica H.264 + AAC con WebCodecs (sin depender del tiempo real)
 async function exportHQ(c){
   if(!window.VideoEncoder||!window.AudioEncoder||!window.VideoFrame||!window.AudioData||!c.au)throw new Error('WebCodecs no disponible');
-  const W=cv.width,H=cv.height;
-  const vcfg={codec:'avc1.64002A',width:W,height:H,bitrate:W>=1080?16e6:9e6,framerate:FPS,latencyMode:'quality',avc:{format:'avc'}};
+  const W=cv.width,H=cv.height,SS=$('#ss').checked?1.5:1;
+  // canvas de export (posiblemente supersampleado)
+  const ecv=document.createElement('canvas');ecv.width=Math.round(W*SS);ecv.height=Math.round(H*SS);
+  const ectx=ecv.getContext('2d',{alpha:false});
+  const bitrate=W>=1080?24e6:12e6;
+  const vcfg={codec:'avc1.64002A',width:W,height:H,bitrate,framerate:FPS,latencyMode:'quality',avc:{format:'avc'}};
   if(!(await VideoEncoder.isConfigSupported(vcfg)).supported)throw new Error('H.264 no soportado');
   const {L,R,sr}=c.au;
   let acfg={codec:'mp4a.40.2',sampleRate:sr,numberOfChannels:2,bitrate:192000},acodec='aac';
@@ -578,9 +625,21 @@ async function exportHQ(c){
     const N=Math.max(1,Math.floor((c.e-c.s)*FPS));
     for(let i=0;i<N;i++){
       const t=c.s+i/FPS;
-      await seek(t);render(t);
-      const fr=new VideoFrame(cv,{timestamp:Math.round(i*1e6/FPS),duration:Math.round(1e6/FPS)});
-      ve.encode(fr,{keyFrame:i%60===0});fr.close();
+      try{await seek(t)}catch(e){/* sigue con el último frame */}
+      // render a resolución de export (supersample si aplica)
+      renderAt(ectx,t,ecv.width,ecv.height);
+      let src=ecv;
+      if(SS!==1){
+        // downsample a W×H en un canvas temporal reutilizable
+        if(!exportHQ._tmp){exportHQ._tmp=document.createElement('canvas')}
+        const tc=exportHQ._tmp;tc.width=W;tc.height=H;
+        const tg=tc.getContext('2d',{alpha:false});
+        tg.imageSmoothingEnabled=true;tg.imageSmoothingQuality='high';
+        tg.drawImage(ecv,0,0,W,H);
+        src=tc;
+      }
+      const fr=new VideoFrame(src,{timestamp:Math.round(i*1e6/FPS),duration:Math.round(1e6/FPS)});
+      ve.encode(fr,{keyFrame:i%FPS===0});fr.close();
       feed(i/FPS+.4);
       while(ve.encodeQueueSize>6&&!err)await tick();
       if(err)throw err;
@@ -596,14 +655,13 @@ async function exportHQ(c){
   }
 }
 
-// Alternativa si el navegador no soporta WebCodecs: grabación en tiempo real con bitrate alto
 async function exportRT(c){
   S.exp=2;
   audioGraph();await ac.resume();mon.gain.value=0;
   await seek(c.s);
   const stream=cv.captureStream(FPS);dest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));
   const mt=['video/mp4;codecs=avc1.640033,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
-  const rec=new MediaRecorder(stream,{mimeType:mt,videoBitsPerSecond:cv.width>720?20e6:12e6,audioBitsPerSecond:192000}),parts=[];
+  const rec=new MediaRecorder(stream,{mimeType:mt,videoBitsPerSecond:cv.width>720?24e6:14e6,audioBitsPerSecond:192000}),parts=[];
   rec.ondataavailable=e=>e.data.size&&parts.push(e.data);
   const stopped=new Promise(r=>rec.onstop=r);
   rec.start(250);await vid.play();
@@ -629,7 +687,7 @@ async function exportClip(c){
     log('Clip exportado.');
   }catch(e){console.error(e);log('Error al exportar: '+(e.message||e))}
   S.exp=0;$('#exp').textContent='Exportar clip';$('#exp').disabled=$('#play').disabled=false;
-  await seek(c.s);
+  try{await seek(c.s)}catch(e){}
 }
 $('#exp').onclick=()=>exportClip(S.cur);
 $('#expall').onclick=async()=>{
