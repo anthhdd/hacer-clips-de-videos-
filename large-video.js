@@ -167,7 +167,7 @@
     try {
       const detector = await getFaceDetector();
       const points = [];
-      const step = clip.e - clip.s > 1800 ? 1.2 : 0.55;
+      const step = clip.e - clip.s > 1800 ? 2 : 1.1;
       const total = Math.max(1, Math.ceil((clip.e - clip.s) / step));
       for (let i = 0, t = clip.s; t < clip.e; i++, t += step) {
         await seek(t);
