@@ -4,7 +4,7 @@
 (() => {
   'use strict';
   const $ = s => document.querySelector(s);
-  const video = document.querySelector('video');
+  const video = vid;
   const originalSeek = seek;
 
   // A seek timeout must not be treated as success: doing so exports stale frames.
@@ -70,10 +70,11 @@
     $('#expall').disabled = true;
     $('#play').disabled = true;
     $('#exp').disabled = true;
-    S.objectUrl = URL.createObjectURL(file);
     oldLoad(file);
-    // oldLoad creates a second URL; replace it with the managed one.
-    if (video.src !== S.objectUrl) video.src = S.objectUrl;
+    const previousUrl = video.src;
+    S.objectUrl = URL.createObjectURL(file);
+    video.src = S.objectUrl;
+    if (previousUrl && previousUrl.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
     video.onerror = () => log('No se pudo decodificar este archivo. Prueba MP4 con vídeo H.264 y audio AAC.');
   };
 
