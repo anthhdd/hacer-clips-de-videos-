@@ -71,7 +71,7 @@ textarea{font:inherit;font-size:13px;padding:7px 8px;border:1.5px solid var(--li
       <label class="f">Transcripción<select id="prov"><option value="groq">Groq en la nube (gratis, rápido)</option><option value="openai">OpenAI Whisper (de pago)</option><option value="local">En este equipo (pesado)</option></select></label>
       <label class="f" id="tkl">API key de Groq<input id="tkey" type="password" placeholder="gsk_…" autocomplete="off"></label>
       <label class="f" id="mlab" style="display:none">Modelo local<select id="model"><option value="Xenova/whisper-tiny" selected>Tiny · el más ligero</option><option value="Xenova/whisper-base">Base</option></select></label>
-      <label class="f">Cantidad de clips<input id="n" type="number" value="6" min="1" max="20"></label>
+      <label class="f">Cantidad de clips<input id="n" type="number" value="20" min="1" max="100"></label>
     </div>
     <details open><summary>IA opcional: Claude elige los segundos exactos (recomendado)</summary>
       <div class="grid">
@@ -109,10 +109,10 @@ textarea{font:inherit;font-size:13px;padding:7px 8px;border:1.5px solid var(--li
     <label class="f" style="margin-top:12px">Altura de subtítulos<input id="ypos" type="range" min="40" max="90" value="79"></label>
     <label class="chk"><input type="checkbox" id="hook" checked> Mostrar título gancho los primeros 3 s</label>
     <label class="chk"><input type="checkbox" id="wm" checked> Marca de agua «anthnclips»</label>
-    <label class="chk"><input type="checkbox" id="ss" checked> Exportar HD con supersampling 1.5× (más nítido, algo más lento)</label>
+    <label class="chk"><input type="checkbox" id="ss"> Supersampling 1.5× (más lento; no recupera detalle que no tenga el original)</label>
     <label class="f" style="margin-top:8px">Título gancho<input id="ttl" type="text"></label>
     <label class="f" style="margin-top:12px">Texto del clip (corrige errores; mantén el mismo número de palabras)<textarea id="ed" rows="4"></textarea></label>
-    <p style="font-size:12px;color:var(--mut);margin:10px 0 0">La exportación HD se procesa cuadro a cuadro (sin pérdida de frames) y tarda 1–2 min por clip. Mantén esta pestaña abierta hasta que termine. Mejor en Chrome o Edge.</p>
+    <p style="font-size:12px;color:var(--mut);margin:10px 0 0">Exportación MP4 H.264 de alta calidad (hasta 35 Mb/s en 1080p) y audio AAC. Desactiva el supersampling para exportar más rápido. La resolución final nunca puede superar el detalle del vídeo original. Mantén esta pestaña abierta.</p>
   </div>
 </aside>
 </main>
@@ -597,7 +597,7 @@ async function exportHQ(c){
   // canvas de export (posiblemente supersampleado)
   const ecv=document.createElement('canvas');ecv.width=Math.round(W*SS);ecv.height=Math.round(H*SS);
   const ectx=ecv.getContext('2d',{alpha:false});
-  const bitrate=W>=1080?24e6:12e6;
+  const bitrate=W>=1080?35e6:18e6;
   const vcfg={codec:'avc1.64002A',width:W,height:H,bitrate,framerate:FPS,latencyMode:'quality',avc:{format:'avc'}};
   if(!(await VideoEncoder.isConfigSupported(vcfg)).supported)throw new Error('H.264 no soportado');
   const {L,R,sr}=c.au;
@@ -661,7 +661,7 @@ async function exportRT(c){
   await seek(c.s);
   const stream=cv.captureStream(FPS);dest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));
   const mt=['video/mp4;codecs=avc1.640033,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
-  const rec=new MediaRecorder(stream,{mimeType:mt,videoBitsPerSecond:cv.width>720?24e6:14e6,audioBitsPerSecond:192000}),parts=[];
+  const rec=new MediaRecorder(stream,{mimeType:mt,videoBitsPerSecond:cv.width>720?28e6:16e6,audioBitsPerSecond:192000}),parts=[];
   rec.ondataavailable=e=>e.data.size&&parts.push(e.data);
   const stopped=new Promise(r=>rec.onstop=r);
   rec.start(250);await vid.play();
@@ -712,7 +712,7 @@ $('#go').onclick=async()=>{
     if(S.words.length<10)throw new Error('No se detectó suficiente voz en el video.');
     prog(92);log('Buscando los mejores momentos…');
     S.sents=sentences(S.words);
-    const n=+$('#n').value||6;
+    const n=Math.max(1,Math.min(100,Math.floor(+$('#n').value)||20));
     let list=await aiPick(n);
     if(!list||!list.length)list=findClips(n);
     else if(list.length<n){
